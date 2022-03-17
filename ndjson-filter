@@ -1,0 +1,101 @@
+#!/usr/bin/python
+
+import json as js
+from sys import argv, stdin, stderr
+from os import environ
+from functools import partial
+from collections import namedtuple
+
+
+eprint = partial(print, file=stderr, flush=True)
+
+
+FilterBase = namedtuple("FilterBase", ("key", "values"))
+
+
+def read_filter(f):
+    parts = f.split('=')
+    if len(parts) == 1:
+        # return all messages containing this key
+        return Filter(f.lower(), None)
+
+    if len(parts) != 2:
+        raise RuntimeError(f"invalid filter {filter}")
+
+    key, values = parts
+
+    value_parts = values.split(',')
+    if len(value_parts) == 1:
+        # return filter with key and value level=INFO
+        return Filter(key.lower(), values.lower())
+
+    # return filter with multiple values level=INFO,ERROR
+    return Filter(key.lower(), list(map(lambda v: v.lower(), value_parts)))
+
+
+class Filter(FilterBase):
+    def is_match_kv(self, key, value):
+        if key != self.key:
+            return False
+
+        if value is None:
+            return True
+
+        if isinstance(self.values, str):
+            return self.values in value
+
+        if isinstance(self.values, list):
+            for val in self.values:
+                if val in value:
+                    return True
+
+        return False
+
+    def is_match(self, line):
+        for key, val in line.items():
+            if self.is_match_kv(key, val):
+                return True
+
+        return False
+
+
+def handle_line(line, filters):
+    if all(map(lambda f: f.is_match(line), filters)):
+        print(line, flush=True)
+
+
+def run(filters):
+    for line in stdin:
+        # strip the newline
+       line = line.strip()
+       try:
+           line = js.loads(line)
+           for k in list(line.keys()):
+               line[k] = str(line[k]).lower()
+       except Exception:
+           eprint("ERROR: NOT JSON!")
+           eprint("################################")
+           eprint(line)
+           eprint("################################")
+
+       else:
+           handle_line(line, filters)
+
+
+def main():
+    filters = []
+    if len(argv):
+        for f in argv[1:]:
+            filters.append(read_filter(f))
+
+    # dump filters
+    for (key, value) in filters:
+        if value is None:
+            value = "*"
+        print(f"filter {key}:{value}")
+
+    run(filters)
+
+
+if __name__ == '__main__':
+    main()
